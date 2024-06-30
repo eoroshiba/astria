@@ -18,6 +18,7 @@ use crate::{
     mount_sequencer_genesis,
     mount_sequencer_validator_set,
     mount_update_commitment_state,
+    mount_duplicate_celestia_blobs,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -362,6 +363,87 @@ async fn fetch_from_later_celestia_height() {
             parent: [1; 64],
         ),
         base_celestia_height: 4,
+    );
+
+    timeout(
+        Duration::from_millis(2000),
+        join(
+            execute_block.wait_until_satisfied(),
+            update_commitment_state.wait_until_satisfied(),
+        ),
+    )
+    .await
+    .expect(
+        "conductor should have executed the firm block and updated the firm commitment state \
+         within 1000ms",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn handles_duplicate_blobs() {
+    let test_conductor = spawn_conductor(CommitLevel::FirmOnly).await;
+
+    mount_get_genesis_info!(
+        test_conductor,
+        sequencer_genesis_block_height: 1,
+        celestia_block_variance: 10,
+    );
+
+    mount_get_commitment_state!(
+        test_conductor,
+        firm: (
+            number: 1,
+            hash: [1; 64],
+            parent: [0; 64],
+        ),
+        soft: (
+            number: 1,
+            hash: [1; 64],
+            parent: [0; 64],
+        ),
+        base_celestia_height: 1,
+    );
+
+    mount_sequencer_genesis!(test_conductor);
+
+    mount_celestia_header_network_head!(
+        test_conductor,
+        height: 1u32,
+    );
+
+    mount_duplicate_celestia_blobs!(
+        test_conductor,
+        celestia_height: 1,
+        sequencer_heights: [3],
+    );
+
+    mount_sequencer_commit!(
+        test_conductor,
+        height: 3u32,
+    );
+
+    mount_sequencer_validator_set!(test_conductor, height: 2u32);
+
+    let execute_block = mount_executed_block!(
+        test_conductor,
+        number: 2,
+        hash: [2; 64],
+        parent: [1; 64],
+    );
+
+    let update_commitment_state = mount_update_commitment_state!(
+        test_conductor,
+        firm: (
+            number: 2,
+            hash: [2; 64],
+            parent: [1; 64],
+        ),
+        soft: (
+            number: 2,
+            hash: [2; 64],
+            parent: [1; 64],
+        ),
+        base_celestia_height: 1,
     );
 
     timeout(
